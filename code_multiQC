@@ -1,0 +1,14 @@
+
+
+Multiqc
+
+multiqc ./FASTQC_5th -o ./MULTIQC_5th -n MULTIQC_5th
+
+
+multiqc - tool
+./FASTQC - input
+-o output
+path for output
+-n - name that the file will have
+MULTIQC - name I chose
+

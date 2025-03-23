@@ -1,0 +1,275 @@
+#Annotation
+organism = "org.Hs.eg.db"
+library(organism, character.only = TRUE)
+
+#create a gene list from a df resulted from DESeq2 
+df <-read.xlsx("C:/Users/Anna/Documents/CVID_project/DF/df.HD_ABxIB.xlsx", rowNames=FALSE)
+# log2 fold change 
+original_gene_list <- df$log2FoldChange
+# name the vector
+names(original_gene_list) <- df$row.names
+##gene_list_entrez
+#Convert gene IDs 
+ids<-bitr(names(original_gene_list), fromType = "SYMBOL", toType = "ENTREZID", OrgDb=organism)
+ids <-as.data.frame(ids)
+# remove duplicate IDS 
+dedup_ids = ids[!duplicated(ids[c("SYMBOL")]),]
+# Create a new dataframe df2 which has only the genes which were successfully mapped using the bitr function above
+df2 = df[df$row.names %in% dedup_ids$SYMBOL,]
+# Create a new column in df2 with the corresponding ENTREZ IDs
+df2$ENTREZ = dedup_ids$ENTREZID
+# Create a vector of the gene unuiverse
+entrez_geneList <- df2$log2FoldChange
+# Name vector with ENTREZ ids
+names(entrez_geneList) <- df2$ENTREZ
+# omit any NA values 
+entrez_geneList<-na.omit(entrez_geneList)
+# sort the list in decreasing order (required for clusterProfiler)
+entrez_geneList = sort(entrez_geneList, decreasing = TRUE)
+head(entrez_geneList)
+###############################################################################
+##gseGO
+set.seed(123)
+gse <- gseGO(geneList=entrez_geneList, 
+             ont ="BP", 
+             keyType = "ENTREZID",
+             minGSSize = 10, 
+             maxGSSize = 500, 
+             pvalueCutoff = 0.05, 
+             verbose = TRUE, 
+             OrgDb = organism, 
+             pAdjustMethod = "BH",
+             eps =0,
+             seed=TRUE,
+             exponent =1,
+             by="fgsea")
+
+data_go <- as.data.frame(gse)
+write.xlsx(data_go,"C:/Users/Anna/Documents/CVID_project/GSEA/HD_ABxIB/GO.xlsx", asTable = TRUE, rowNames=TRUE)
+
+#dotplot
+p <- as.data.frame(gse) %>%
+  mutate(
+    num_genes = sapply(strsplit(core_enrichment, "/"), length),
+    GeneRatio = num_genes / setSize) %>%
+  dplyr::mutate(type = dplyr::if_else(NES > 0, "upregulated", "downregulated")) %>%
+  dplyr::arrange(p.adjust) %>% 
+  dplyr::group_by(sign(NES)) %>% 
+  dplyr::slice(1:10) %>%
+  ggplot(., aes(x = GeneRatio, y = fct_reorder(Description, GeneRatio))) + 
+  geom_point(aes(size = GeneRatio, color = p.adjust)) +
+  facet_grid(~ type) +
+  theme_bw(base_size = 10) +
+  scale_fill_continuous(low='red', high='blue', guide=guide_colorbar(reverse=TRUE)) + 
+  ylab(NULL) +
+  ggtitle("GO: HD Bright Activated x Nonactivated")
+
+#rideplot
+ridgeplot(gse) + 
+  labs(x= "Enrichment Distribution" ) +
+  theme(axis.title.x = element_text(size = 10,
+                                    color = "black",
+                                    face = "bold")) +
+  geom_density_ridges() +
+  scale_x_continuous(expand = c(0,0)) +
+  scale_y_discrete(expand = c(0, 0)) +
+  coord_cartesian(clip = "off") + 
+  theme_ridges(grid = FALSE)
+#net
+pwt<-pairwise_termsim(gse)
+emapplot(pwt,showCategory=10) +
+  ggtitle("GO: HD Bright Activated x Nonactivated")+
+  theme(plot.title= element_text(color="black", size=20, face="bold"))
+
+##############################################################################################
+##KEGG
+#kegg
+set.seed(123)
+kegg_organism = "hsa"
+kk2 <- gseKEGG(geneList     = entrez_geneList,
+               organism     = kegg_organism,
+               minGSSize    = 10,
+               maxGSSize    = 500,
+               pvalueCutoff = 0.05,
+               pAdjustMethod = "BH",
+               keyType       = "kegg",
+               verbose=TRUE,
+               seed=TRUE,
+               by="fgsea")
+
+data_kegg <- as.data.frame(kk2)
+write.xlsx(data_kegg,"C:/Users/Anna/Documents/CVID_project/GSEA/HD_ABxIB/KEGG.xlsx", asTable = TRUE, rowNames=TRUE)
+
+
+#dotplot
+p <- as.data.frame(kk2) %>%
+  mutate(
+    num_genes = sapply(strsplit(core_enrichment, "/"), length),
+    GeneRatio = num_genes / setSize) %>%
+  dplyr::mutate(type = dplyr::if_else(NES > 0, "upregulated", "downregulated")) %>%
+  dplyr::arrange(p.adjust) %>% 
+  dplyr::group_by(sign(NES)) %>% 
+  dplyr::slice(1:10) %>%
+  ggplot(., aes(x = GeneRatio, y = fct_reorder(Description, GeneRatio))) + 
+  geom_point(aes(size = GeneRatio, color = p.adjust)) +
+  facet_grid(~ type) +
+  theme_bw(base_size = 10) +
+  scale_fill_continuous(low='red', high='blue', guide=guide_colorbar(reverse=TRUE)) + 
+  ylab(NULL) +
+  ggtitle("KEGG: HD Bright Activated x Nonactivated")
+
+#emapplot
+pwt<-pairwise_termsim(kk2) 
+p1=emapplot(pwt,showCategory=10, node_label="category") +
+  ggtitle("KEGG: HD Bright Activated x Nonactivated")+
+  theme(plot.title= element_text(color="black", size=10, face="bold"))
+?emapplot
+# categorySize can be either 'pvalue' or 'geneNum'
+p2=cnetplot(kk2, categorySize="pvalue", foldChange=entrez_geneList)
+cowplot::plot_grid(p1, p2, ncol=2)
+
+#running score
+plot<- gseaplot(kk2, geneSetID = 1, by = "runningScore", title = "KEGG: HD Bright Activated x Nonactivated")
+#pathview
+library(pathview)
+# Produce the native KEGG plot (PNG)
+dme <- pathview(gene.data=entrez_geneList, pathway.id="", species = kegg_organism)
+
+d=as.data.frame(kk2)
+
+##REACTOME
+set.seed(123)
+react <- gsePathway(geneList = entrez_geneList,
+                    organism = "human",
+                    minGSSize = 10,
+                    maxGSSize  = 500,
+                    pvalueCutoff = 0.05,
+                    pAdjustMethod = "BH",
+                    verbose=TRUE,
+                    seed=TRUE,
+                    by="fgsea")
+data_react <- as.data.frame(react)
+write.xlsx(data_react,"C:/Users/Anna/Documents/CVID_project/GSEA/HD_ABxIB/Reactome.xlsx", asTable = TRUE, rowNames=FALSE)
+
+
+?gsePathway
+p <- as.data.frame(react) %>%
+  dplyr::arrange(p.adjust) %>% 
+  dplyr::group_by(sign(NES)) %>% 
+  dplyr::slice(1:10) %>%
+  ggplot(., aes(x = NES, y = fct_reorder(Description, NES),fill=p.adjust)) + 
+  geom_bar(stat="identity") +
+  theme_bw(base_size = 10) +
+  scale_fill_continuous(low='red', high='blue', guide=guide_colorbar(reverse=TRUE)) + 
+  ylab(NULL) +
+  ggtitle("Reactome: HD Bright Activated x Nonactivated")
+#upsetplot
+upsetplot(react)
+##DOSE
+set.seed(123)
+do <- gseDO(geneList=entrez_geneList,
+            organism = "hsa",
+            minGSSize = 10,
+            maxGSSize  = 500,
+            pvalueCutoff = 0.05,
+            pAdjustMethod = "BH",
+            verbose=TRUE,
+            seed=TRUE,
+            by="fgsea")
+data_do <- as.data.frame(do)
+write.xlsx(data_do,"C:/Users/Anna/Documents/CVID_project/GSEA/HD_ABxIB/DO.xlsx", asTable = TRUE, rowNames=FALSE)
+p <- as.data.frame(do) %>%
+  mutate(
+    num_genes = sapply(strsplit(core_enrichment, "/"), length),
+    GeneRatio = num_genes / setSize) %>%
+  dplyr::mutate(type = dplyr::if_else(NES > 0, "upregulated", "downregulated")) %>%
+  dplyr::arrange(p.adjust) %>% 
+  dplyr::group_by(sign(NES)) %>% 
+  dplyr::slice(1:10) %>%
+  ggplot(., aes(x = GeneRatio, y = fct_reorder(Description, GeneRatio))) + 
+  geom_point(aes(size = GeneRatio, color = p.adjust)) +
+  facet_grid(~ type) +
+  theme_bw(base_size = 10) +
+  scale_fill_continuous(low='red', high='blue', guide=guide_colorbar(reverse=TRUE)) + 
+  ylab(NULL) +
+  ggtitle("DO: HD Bright Activated x Nonactivated")
+#barplot
+p <- as.data.frame(do) %>%
+  dplyr::arrange(p.adjust) %>% 
+  dplyr::group_by(sign(NES)) %>% 
+  dplyr::slice(1:10) %>%
+  ggplot(., aes(x = NES, y = fct_reorder(Description, NES),fill=p.adjust)) + 
+  geom_bar(stat="identity") +
+  theme_bw(base_size = 10) +
+  scale_fill_continuous(low='red', high='blue', guide=guide_colorbar(reverse=TRUE)) + 
+  ylab(NULL) +
+  ggtitle("DO: Bright Activated x Nonactivated")
+##############################################################
+###motif gene sets
+library(msigdbr)
+msigdbr_show_species()
+m_df <- msigdbr(species = "Homo sapiens")
+head(m_df, 2) %>% as.data.frame
+#GSEA motifs
+C3_t2g <- msigdbr(species = "Homo sapiens", category = "C3") %>% 
+  dplyr::select(gs_name, entrez_gene)
+head(C3_t2g)
+em2 <- GSEA(entrez_geneList, TERM2GENE = C3_t2g)
+head(em2)
+
+data_em2 <- as.data.frame(em2)
+write.xlsx(data_em2,"C:/Users/Anna/Documents/CVID_project/GSEA/HD_ABxIB/Motifs.xlsx", asTable = TRUE, rowNames=FALSE)
+
+p <- as.data.frame(em2) %>%
+  dplyr::arrange(p.adjust) %>% 
+  dplyr::group_by(sign(NES)) %>% 
+  dplyr::slice(1:10) %>%
+  ggplot(., aes(x = NES, y = fct_reorder(Description, NES),fill=p.adjust)) + 
+  geom_bar(stat="identity") +
+  theme_bw(base_size = 10) +
+  scale_fill_continuous(low='red', high='blue', guide=guide_colorbar(reverse=TRUE)) + 
+  ylab(NULL) +
+  ggtitle("Motifs: HD Bright Activated x Nonactivated")
+
+##C7 - immune signatures
+C7_t2g <- msigdbr(species = "Homo sapiens", category = "C7") %>% 
+  dplyr::select(gs_name, entrez_gene)
+head(C7_t2g)
+em3<- GSEA(entrez_geneList, TERM2GENE = C7_t2g)
+head(em3)
+
+data_em3 <- as.data.frame(em3)
+write.xlsx(data_em3,"C:/Users/Anna/Documents/CVID_project/GSEA/HD_ABxIB/Signatures.xlsx", asTable = TRUE, rowNames=FALSE)
+
+p <- as.data.frame(em3) %>%
+  dplyr::arrange(p.adjust) %>% 
+  dplyr::group_by(sign(NES)) %>% 
+  dplyr::slice(1:10) %>%
+  ggplot(., aes(x = NES, y = fct_reorder(Description, NES),fill=p.adjust)) + 
+  geom_bar(stat="identity") +
+  theme_bw(base_size = 10) +
+  scale_fill_continuous(low='red', high='blue', guide=guide_colorbar(reverse=TRUE)) + 
+  ylab(NULL) +
+  ggtitle("Signatures:HD Bright Activated x Nonactivated")
+
+##hallmarks
+hall <- msigdbr(species = "Homo sapiens", category = "H") %>% 
+  dplyr::select(gs_name, entrez_gene)
+head(hall)
+em4<- GSEA(entrez_geneList, TERM2GENE = hall)
+head(em4)
+
+data_em4 <- as.data.frame(em4)
+write.xlsx(data_em4,"C:/Users/Anna/Documents/CVID_project/GSEA/HD_ABxIB/Hallmarks.xlsx", asTable = TRUE, rowNames=FALSE)
+
+p <- as.data.frame(em4) %>%
+  dplyr::arrange(p.adjust) %>% 
+  dplyr::group_by(sign(NES)) %>% 
+  dplyr::slice(1:10) %>%
+  ggplot(., aes(x = NES, y = fct_reorder(Description, NES),fill=p.adjust)) + 
+  geom_bar(stat="identity") +
+  theme_bw(base_size = 10) +
+  scale_fill_continuous(low='red', high='blue', guide=guide_colorbar(reverse=TRUE)) + 
+  ylab(NULL) +
+  ggtitle("Hallmark pathways: HD Bright Activated x Nonactivated")
+
